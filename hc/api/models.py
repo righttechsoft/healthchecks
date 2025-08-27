@@ -1251,6 +1251,8 @@ class Flip(models.Model):
             return "success signal did not arrive on time, grace time passed"
         if self.reason == "fail":
             return "received a failure signal"
+        if self.reason == "nag":
+            return "repeated notification for service that remains down"
         return None
 
 
