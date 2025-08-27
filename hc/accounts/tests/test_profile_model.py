@@ -116,3 +116,41 @@ class ProfileModelTestCase(BaseTestCase):
         self.profile.next_nag_date = now()
         self.profile.update_next_nag_date()
         self.assertIsNone(self.profile.next_nag_date)
+
+    @patch("hc.api.models.Channel.notify")
+    def test_it_sends_nag_to_channels(self, mock_notify) -> None:
+        # Create a down check
+        check = Check(project=self.project, name="Test Check")
+        check.status = "down"
+        check.last_ping = now()
+        check.save()
+
+        # Create a webhook channel for this check
+        from hc.api.models import Channel
+        channel = Channel(project=self.project, kind="webhook")
+        channel.value = '{"method_down":"GET","url_down":"https://example.com/webhook","body_down":"","headers_down":{},"method_up":"GET","url_up":"https://example.com/webhook","body_up":"","headers_up":{}}'
+        channel.save()
+        channel.checks.add(check)
+
+        self.profile.nag_period = td(hours=1)
+        self.profile.save()
+
+        # Send the nag
+        sent = self.profile.send_report(nag=True)
+        self.assertTrue(sent)
+
+        # Check that an email was sent (existing behavior)
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.subject, "Reminder: 1 check still down")
+
+        # Check that channel notification was also sent (new behavior)
+        mock_notify.assert_called_once()
+        
+        # Verify the flip passed to notify has correct properties
+        call_args = mock_notify.call_args[0]
+        fake_flip = call_args[0]
+        self.assertEqual(fake_flip.owner, check)
+        self.assertEqual(fake_flip.old_status, "down")
+        self.assertEqual(fake_flip.new_status, "down")
+        self.assertEqual(fake_flip.reason, "nag")

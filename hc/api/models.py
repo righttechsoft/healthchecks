@@ -39,7 +39,7 @@ NEVER = datetime(3000, 1, 1, tzinfo=timezone.utc)
 CHECK_KINDS = (("simple", "Simple"), ("cron", "Cron"), ("oncalendar", "OnCalendar"))
 # max time between start and ping where we will consider both events related:
 MAX_DURATION = td(hours=72)
-REASONS = (("", "Unknown"), ("timeout", "Timeout"), ("fail", "Fail signal"))
+REASONS = (("", "Unknown"), ("timeout", "Timeout"), ("fail", "Fail signal"), ("nag", "Nag"))
 
 
 TRANSPORTS: dict[str, tuple[str, type[transports.Transport]]] = {
