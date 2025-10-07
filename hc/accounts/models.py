@@ -272,39 +272,11 @@ class Profile(models.Model):
             ctx["num_down"] = len(checks)
             ctx["nag_period"] = self.nag_period.total_seconds()
             emails.nag(self.user.email, ctx, headers)
-            
-            # Also send nag notifications through all configured channels
-            self._send_nag_notifications(checks)
+
+            # Note: Channel notifications for nags are now handled by
+            # the sendalerts management command's handle_repeat_notifications method
 
         return True
-
-    def _send_nag_notifications(self, down_checks: list) -> None:
-        """Send nag notifications through all configured channels for down checks."""
-        from hc.api.models import Flip
-        
-        for check in down_checks:
-            # Create a fake "down" flip for each down check to trigger notifications
-            # This reuses the existing notification infrastructure
-            fake_flip = Flip(
-                owner=check,
-                old_status="down",  # Fake that it was already down
-                new_status="down",  # And still is down (nag notification)
-                reason="nag"        # Special reason to indicate this is a nag
-            )
-            
-            # Use the flip's select_channels method to get appropriate channels
-            # This respects transport-specific filtering (e.g., some only send for "down")
-            channels = fake_flip.select_channels()
-            
-            # Send notification through each channel
-            for channel in channels:
-                try:
-                    # Use the existing channel notification system
-                    channel.notify(fake_flip)
-                except Exception:
-                    # If notification fails, continue with other channels
-                    # (same behavior as regular sendalerts)
-                    pass
 
     def sms_sent_this_month(self) -> int:
         # IF last_sms_date was never set, we have not sent any messages yet.

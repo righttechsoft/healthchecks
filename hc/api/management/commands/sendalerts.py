@@ -171,57 +171,80 @@ class Command(BaseCommand):
 
     def handle_repeat_notifications(self) -> bool:
         """Create repeat notifications for checks that have been down for a while.
-        
+
         This method finds checks that:
         1. Are currently down
         2. Have been down for more than 1 hour (configurable)
         3. Haven't had a notification sent in the last 1 hour
-        
+
         For each qualifying check, it creates a new Flip to trigger notifications.
         """
         # Time thresholds for repeat notifications
         repeat_interval = td(hours=1)  # Send repeat notifications every hour
         min_down_time = td(hours=1)    # Only send repeats after being down for 1 hour
-        
+
         current_time = now()
-        
-        # Find checks that have been down for at least min_down_time
         down_threshold = current_time - min_down_time
+        notification_threshold = current_time - repeat_interval
+
+        logger.debug("[nagging] Checking for checks needing repeat notifications")
+
+        # Find checks that are currently down
         q = Check.objects.filter(status="down")
-        
-        # Filter for checks that have been down long enough
-        # We look at the most recent flip to "down" status to determine how long it's been down
-        checks_needing_repeat = []
+
+        # Efficiently filter for checks that have been down long enough
+        # and haven't had a notification sent recently
         for check in q:
             # Get the most recent "down" flip for this check
             latest_down_flip = check.flip_set.filter(new_status="down").order_by("-created").first()
-            if latest_down_flip and latest_down_flip.created <= down_threshold:
-                # Check if we've sent a notification recently
-                latest_notification = check.notification_set.filter(
-                    check_status="down"
-                ).order_by("-created").first()
-                
-                # If no notification or last notification was sent more than repeat_interval ago
-                if (not latest_notification or 
-                    latest_notification.created <= current_time - repeat_interval):
-                    checks_needing_repeat.append((check, latest_down_flip))
-        
-        if not checks_needing_repeat:
-            return False
-        
-        # Process the first check that needs a repeat notification
-        check, original_flip = checks_needing_repeat[0]
-        
-        # Create a new flip to trigger notifications
-        # Use reason "nag" to distinguish from original timeout/fail reasons
-        flip = Flip(owner=check)
-        flip.created = current_time
-        flip.old_status = "down"  # Status hasn't actually changed
-        flip.new_status = "down"  # Still down, but we want to notify again
-        flip.reason = "nag"       # Mark this as a repeat/nag notification
-        flip.save()
-        
-        return True
+
+            if not latest_down_flip:
+                logger.debug(f"[nagging] Check {check.code} is down but has no down flip, skipping")
+                continue
+
+            if latest_down_flip.created > down_threshold:
+                # Check hasn't been down long enough yet
+                logger.debug(
+                    f"[nagging] Check {check.code} down for "
+                    f"{current_time - latest_down_flip.created}, needs {min_down_time}, skipping"
+                )
+                continue
+
+            # Check if we've sent a notification recently
+            latest_notification = check.notification_set.filter(
+                check_status="down"
+            ).order_by("-created").first()
+
+            if latest_notification and latest_notification.created > notification_threshold:
+                # Notification was sent too recently
+                logger.debug(
+                    f"[nagging] Check {check.code} last notified "
+                    f"{current_time - latest_notification.created} ago, needs {repeat_interval}, skipping"
+                )
+                continue
+
+            # This check needs a repeat notification!
+            logger.info(
+                f"[nagging] Creating repeat notification for check {check.code} "
+                f"(down since {latest_down_flip.created}, "
+                f"last notified: {latest_notification.created if latest_notification else 'never'})"
+            )
+
+            # Create a new flip to trigger notifications
+            # Use reason "nag" to distinguish from original timeout/fail reasons
+            flip = Flip(owner=check)
+            flip.created = current_time
+            flip.old_status = "down"  # Status hasn't actually changed
+            flip.new_status = "down"  # Still down, but we want to notify again
+            flip.reason = "nag"       # Mark this as a repeat/nag notification
+            flip.save()
+
+            logger.info(f"[nagging] Created flip {flip.id} for check {check.code}")
+            return True
+
+        # No checks need repeat notifications right now
+        logger.debug("[nagging] No checks currently need repeat notifications")
+        return False
 
     def on_signal(self, signum: int, frame: FrameType | None) -> None:
         desc = signal.strsignal(signum)
