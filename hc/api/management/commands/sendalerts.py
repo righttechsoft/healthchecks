@@ -175,7 +175,7 @@ class Command(BaseCommand):
         This method finds checks that:
         1. Are currently down
         2. Have been down for more than 1 hour (configurable)
-        3. Haven't had a notification sent in the last 1 hour
+        3. Haven't had a nagging flip created in the last 1 hour
 
         For each qualifying check, it creates a new Flip to trigger notifications.
         """
@@ -185,7 +185,7 @@ class Command(BaseCommand):
 
         current_time = now()
         down_threshold = current_time - min_down_time
-        notification_threshold = current_time - repeat_interval
+        nag_threshold = current_time - repeat_interval
 
         logger.debug("[nagging] Checking for checks needing repeat notifications")
 
@@ -193,7 +193,7 @@ class Command(BaseCommand):
         q = Check.objects.filter(status="down")
 
         # Efficiently filter for checks that have been down long enough
-        # and haven't had a notification sent recently
+        # and haven't had a nagging flip created recently
         for check in q:
             # Get the most recent "down" flip for this check
             latest_down_flip = check.flip_set.filter(new_status="down").order_by("-created").first()
@@ -210,16 +210,16 @@ class Command(BaseCommand):
                 )
                 continue
 
-            # Check if we've sent a notification recently
-            latest_notification = check.notification_set.filter(
-                check_status="down"
+            # Check if we've created a nagging flip recently
+            latest_nag_flip = check.flip_set.filter(
+                reason="nag"
             ).order_by("-created").first()
 
-            if latest_notification and latest_notification.created > notification_threshold:
-                # Notification was sent too recently
+            if latest_nag_flip and latest_nag_flip.created > nag_threshold:
+                # Nagging flip was created too recently
                 logger.debug(
-                    f"[nagging] Check {check.code} last notified "
-                    f"{current_time - latest_notification.created} ago, needs {repeat_interval}, skipping"
+                    f"[nagging] Check {check.code} last nagged "
+                    f"{current_time - latest_nag_flip.created} ago, needs {repeat_interval}, skipping"
                 )
                 continue
 
@@ -227,7 +227,7 @@ class Command(BaseCommand):
             logger.info(
                 f"[nagging] Creating repeat notification for check {check.code} "
                 f"(down since {latest_down_flip.created}, "
-                f"last notified: {latest_notification.created if latest_notification else 'never'})"
+                f"last nagged: {latest_nag_flip.created if latest_nag_flip else 'never'})"
             )
 
             # Create a new flip to trigger notifications
